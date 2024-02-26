@@ -1,0 +1,387 @@
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fortflight</title>
+<style>
+    body, html {
+        margin: 0;
+        overflow: hidden;
+        height: 100%;
+        width: 100%;
+        background-color: #000;
+        color: white;
+        font-family: Arial, sans-serif;
+    }
+    canvas {
+        display: none; /* Initially hide the canvas */
+        width: 100%;
+        height: 100%;
+    }
+    #homeScreen {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+    }
+    #playButton {
+        padding: 20px 40px;
+        font-size: 24px;
+        background-color: #00ff00;
+        border: none;
+        cursor: pointer;
+    }
+</style>
+</head>
+<body>
+
+<audio id="backgroundMusic" loop>
+    <source src="background_music.mp3" type="audio/mpeg">
+    Your browser does not support the audio element.
+</audio>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="homeScreen">
+    <button id="playButton">Play</button>
+    <div id="scoreDisplay"></div>
+    <div id="highScoreDisplay"></div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Set canvas size to fullscreen
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // Background stars
+    const numStars = 100;
+    const stars = [];
+
+    for (let i = 0; i < numStars; i++) {
+        stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            radius: Math.random() * 2,
+            color: '#fff',
+            speed: Math.random() + 0.2 // Add speed property to stars
+        });
+    }
+
+    // Player spaceship
+    let player = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        width: 50,
+        height: 50,
+        color: '#00ff00',
+        speed: 4, // Adjust speed for smooth movement
+        health: 100, // Set player health to 100
+        gun: 'pistol',
+        ammo: 30,
+        reloadTime: 2000, // 2 seconds reload time
+        lastReloadTime: Date.now(), // Initialize last reload time
+        specialGun: false, // Special gun power-up state
+        specialGunAmmo: 10 // Special gun ammo
+    };
+
+    // Bullets
+    const bullets = [];
+    const bulletSpeed = 12;
+    const bulletSize = 5;
+    const playerBulletColor = '#ff0000';
+    const enemyBulletColor = '#00ff00'; // Green color for enemy bullets
+
+    // Enemy ships
+    const enemies = [];
+    let enemySpeed = 2;
+    const enemySize = 40;
+    const enemyColor = '#ff6600';
+    const spawnInterval = 1000; // milliseconds
+    const shootInterval = 3000; // milliseconds (adjust for difficulty)
+    let lastSpawn = 0;
+    let lastShoot = 0;
+
+    // Game settings
+    let score = 0;
+    let highScore = localStorage.getItem('highScore') || 0; // Retrieve high score from local storage
+    let difficultyIncreaseInterval = 15000; // Increase difficulty every 15 seconds
+    let lastDifficultyIncrease = 0;
+    let backgroundMusic = document.getElementById('backgroundMusic');
+    let playerSpeedIncreaseRate = 0.1; // Increase player speed by 0.1 every second
+    let lastSpeedIncrease = 0;
+
+    // Keys status
+    const keys = {};
+
+    // Event listeners for player movement and shooting
+    document.addEventListener('keydown', function(event) {
+        keys[event.key] = true;
+        if (event.key === ' ') {
+            fireBullet();
+        }
+        if (event.key === 'e') {
+            activateSpecialPower();
+        }
+    });
+
+    document.addEventListener('keyup', function(event) {
+        keys[event.key] = false;
+    });
+
+    // Play button event listener
+    const playButton = document.getElementById('playButton');
+    playButton.addEventListener('click', function() {
+        startGame();
+    });
+
+    function drawStars() {
+        for (let star of stars) {
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+            ctx.fillStyle = star.color;
+            ctx.fill();
+        }
+    }
+
+    function moveStars() {
+        for (let star of stars) {
+            star.y += star.speed;
+            if (star.y > canvas.height) {
+                star.y = 0;
+            }
+        }
+    }
+
+    function movePlayer() {
+        if (keys['ArrowUp'] && player.y > 0) {
+            player.y -= player.speed;
+        }
+        if (keys['ArrowDown'] && player.y < canvas.height - player.height) {
+            player.y += player.speed;
+        }
+        if (keys['ArrowLeft'] && player.x > 0) {
+            player.x -= player.speed;
+        }
+        if (keys['ArrowRight'] && player.x < canvas.width - player.width) {
+            player.x += player.speed;
+        }
+    }
+
+    function drawPlayer() {
+        ctx.fillStyle = player.color;
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+    }
+
+    function drawBullets() {
+        for (let bullet of bullets) {
+            ctx.fillStyle = bullet.playerBullet ? playerBulletColor : enemyBulletColor;
+            ctx.fillRect(bullet.x, bullet.y, bulletSize, bulletSize);
+        }
+    }
+
+    function drawEnemies() {
+        ctx.fillStyle = enemyColor;
+        for (let enemy of enemies) {
+            // Draw the main body (triangle shape)
+            ctx.beginPath();
+            ctx.moveTo(enemy.x + enemySize / 2, enemy.y + enemySize); // Bottom center
+            ctx.lineTo(enemy.x, enemy.y); // Top left
+            ctx.lineTo(enemy.x + enemySize, enemy.y); // Top right
+            ctx.closePath();
+            ctx.fill();
+        }
+    }
+
+    function fireBullet() {
+        if (player.ammo > 0) {
+            bullets.push({
+                x: player.x + player.width / 2 - bulletSize / 2,
+                y: player.y,
+                speed: bulletSpeed,
+                playerBullet: true
+            });
+            player.ammo--;
+        }
+    }
+
+    function reloadAmmo() {
+        if (Date.now() - player.lastReloadTime >= player.reloadTime) {
+            player.ammo = 30; // Reload ammo
+            player.lastReloadTime = Date.now(); // Update last reload time
+        }
+    }
+
+    function spawnEnemy() {
+        enemies.push({
+            x: Math.random() * (canvas.width - enemySize),
+            y: -enemySize,
+            speed: enemySpeed
+        });
+    }
+
+    function moveBullets() {
+        for (let bullet of bullets) {
+            bullet.y -= bullet.speed;
+        }
+    }
+
+    function moveEnemies() {
+        for (let enemy of enemies) {
+            enemy.y += enemy.speed;
+        }
+    }
+
+    function enemyShoot(enemy) {
+        bullets.push({
+            x: enemy.x + enemySize / 2 - bulletSize / 2,
+            y: enemy.y + enemySize,
+            speed: -bulletSpeed, // Change the direction of enemy bullets
+            playerBullet: false // Set enemy bullets to false
+        });
+    }
+
+    function checkCollisions() {
+        // Check bullet-enemy collisions
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            for (let j = enemies.length - 1; j >= 0; j--) {
+                if (bullets[i] && enemies[j] && bullets[i].playerBullet && isColliding(bullets[i], enemies[j])) {
+                    bullets.splice(i, 1);
+                    enemies.splice(j, 1);
+                    score += 10;
+                    break;
+                }
+            }
+        }
+
+        // Check player-enemy collisions
+        for (let enemy of enemies) {
+            if (isColliding(player, enemy)) {
+                player.health -= 10;
+                if (player.health <= 0) {
+                    gameOver();
+                    return;
+                }
+            }
+        }
+
+        // Check bullet-player collisions
+        for (let bullet of bullets) {
+            if (!bullet.playerBullet && isColliding(player, bullet)) {
+                player.health -= 10;
+                if (player.health <= 0) {
+                    gameOver();
+                    return;
+                }
+            }
+        }
+    }
+
+    function isColliding(rect1, rect2) {
+        return rect1.x < rect2.x + enemySize &&
+               rect1.x + player.width > rect2.x &&
+               rect1.y < rect2.y + enemySize &&
+               rect1.y + player.height > rect2.y;
+    }
+
+    function gameOver() {
+        // Save high score to local storage
+        if (score > highScore) {
+            highScore = score;
+            localStorage.setItem('highScore', highScore);
+        }
+
+        ctx.font = "40px Arial";
+        ctx.fillStyle = "white";
+        ctx.textAlign = "center";
+        ctx.fillText("Game Over", canvas.width / 2, canvas.height / 2);
+        ctx.fillText("Final Score: " + score, canvas.width / 2, canvas.height / 2 + 50);
+        ctx.fillText("High Score: " + highScore, canvas.width / 2, canvas.height / 2 + 100);
+        clearInterval(gameLoop);
+        setTimeout(() => {
+            document.getElementById('homeScreen').style.display = 'flex'; // Show home screen
+            document.getElementById('scoreDisplay').innerText = "Last Score: " + score; // Show last score
+            document.getElementById('highScoreDisplay').innerText = "High Score: " + highScore; // Show high score
+            canvas.style.display = 'none'; // Hide canvas
+            player.health = 100; // Reset player health
+            score = 0; // Reset score
+            player.speed = 4; // Reset player speed
+            backgroundMusic.pause(); // Pause background music
+        }, 3000); // Show home screen after 3 seconds
+    }
+
+    function activateSpecialPower() {
+        if (!player.specialGun && player.specialGunAmmo > 0) {
+            player.gun = 'coolGun';
+            player.specialGunAmmo--; // Decrease special gun ammo
+            player.specialGun = true; // Special gun activated
+        }
+    }
+
+    function increaseDifficulty() {
+        enemySpeed += 0.5; // Increase enemy speed
+        player.speed += playerSpeedIncreaseRate; // Increase player speed
+    }
+
+    function drawUI() {
+        ctx.fillStyle = 'white';
+        ctx.font = '20px Arial';
+        ctx.fillText('Score: ' + score, 20, 30);
+        ctx.fillText('Health: ' + player.health, canvas.width - 120, 30);
+        ctx.fillText('Ammo: ' + player.ammo, canvas.width - 120, 60);
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        moveStars(); // Move stars
+        drawStars(); // Draw stars
+        movePlayer(); // Move player
+        drawPlayer();
+        drawBullets();
+        drawEnemies();
+        moveBullets();
+        moveEnemies();
+        checkCollisions();
+        drawUI();
+        reloadAmmo(); // Reload ammo
+
+        if (Date.now() - lastSpawn > spawnInterval) {
+            spawnEnemy();
+            lastSpawn = Date.now();
+        }
+
+        if (Date.now() - lastShoot > shootInterval) {
+            for (let enemy of enemies) {
+                enemyShoot(enemy);
+            }
+            lastShoot = Date.now();
+        }
+
+        if (Date.now() - lastDifficultyIncrease > difficultyIncreaseInterval) {
+            increaseDifficulty();
+            lastDifficultyIncrease = Date.now();
+        }
+
+        if (Date.now() - lastSpeedIncrease > 1000) {
+            player.speed += playerSpeedIncreaseRate; // Increase player speed every second
+            lastSpeedIncrease = Date.now();
+        }
+
+        if (player.health <= 0) {
+            gameOver();
+        }
+    }
+
+    function startGame() {
+        document.getElementById('homeScreen').style.display = 'none'; // Hide home screen
+        canvas.style.display = 'block'; // Show canvas
+        backgroundMusic.play(); // Start background music
+        const gameLoop = setInterval(draw, 1000 / 60); // Start game loop
+    }
+</script>
+
+</body>
+</html>
